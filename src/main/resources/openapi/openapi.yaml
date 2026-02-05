@@ -1,0 +1,505 @@
+openapi: 3.1.0
+info:
+  title: Mini Banking Core API
+  description: |
+    RESTful API that simulates the essential functionalities of a banking core.
+
+    ## Features
+    - Bank account managment
+    - Transfers between accounts with transactional atomicity
+    - Transaction history
+    - Event notifications simulation
+
+    ## Bussiness Rules
+    - Negative balances are not allowed (overdraft not permited)
+    - Self-transfer is not allowed
+    - Transfer ammount must be greater than zero
+    - Transfers are atomic (all or nothing)
+  version: 1.0.0
+  contact:
+    name: Wilmar Dario Garcia Valderrama
+
+servers:
+  - url: http://localhost:8080
+    description: Development server
+
+tags:
+  - name: Accounts
+    description: Bank account managment operations
+  - name: Transactions
+    description: Transactional operations (transfers and history)
+
+paths:
+  /api/v1/accounts:
+    post:
+      tags:
+        - Accounts
+      summary: Create bank account
+      description: Register a new bank account in the system
+      operationId: createAccount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAccountRequest'
+            examples:
+              basic:
+                summary: Account with initial deposite
+                value:
+                  ownerName: "John Doe"
+                  initialBalance: 1000000.00
+              zero-balance:
+                summary: Account without initial balance
+                value:
+                  ownerName: "Jane Smith"
+                  initialBalance: 0
+      responses:
+        '201':
+          description: Account created sucessfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+              example:
+                accountNumber: "1234567890123456"
+                ownerName: "John Doe"
+                balance: 1000000.00
+                status: "ACTIVE"
+                createdAt: "2026-02-05T10:30:00"
+        '400':
+          description: Invalid input data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+              example:
+                timestamp: "2026-02-05T10:30:00Z"
+                status: 400
+                error: "Bad Request"
+                code: "VALIDATION_ERROR"
+                message: "Owner name is required"
+                path: "/api/v1/accounts"
+
+  /api/v1/accounts/{accountNumber}:
+    get:
+      tags:
+        - Accounts
+      summary: Get account details
+      description: Retrives detailed information of a specific account
+      operationId: getAccount
+      parameters:
+        - name: accountNumber
+          in: path
+          required: true
+          description: Account number (10-20 digits)
+          schema:
+            type: string
+            pattern: '^[0-9]{10,20}$'
+          example: "1234567890123456"
+      responses:
+        '200':
+          description: Account information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '404':
+          description: Account not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+              example:
+                timestamp: "2026-02-05T10:30:00Z"
+                status: 404
+                error: "Not Found"
+                code: "ACCOUNT_NOT_FOUND"
+                message: "Account not found: 1234567890123456"
+                path: "/api/v1/accounts/1234567890123456"
+
+  /api/v1/accounts/{accountNumber}/transactions:
+    get:
+      tags:
+        - Transactions
+      summary: Transaction history
+      description: Query the list of movements (incomes and expenses) of an account
+      operationId: getTransactionHistory
+      parameters:
+        - name: accountNumber
+          in: path
+          required: true
+          description: Account number
+          schema:
+            type: string
+            pattern: '^[0-9]{10,20}$'
+          example: "1234567890123456"
+        - name: page
+          in: query
+          required: false
+          description: Page number (starts at 0)
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+        - name: size
+          in: query
+          required: false
+          description: Page size
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+      responses:
+        '200':
+          description: Transactions list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionHistoryResponse'
+        '404':
+          description: Account not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+
+  /api/v1/transactions/transfer:
+    post:
+      tags:
+        - Transactions
+      summary: Transfer funds
+      description: |
+        Performs a money transfer beetween two existing accounts.
+
+        ## Validations
+        - Both accounts must exist
+        - Source account must have suficient balance
+        - Ammount must be greater than zero
+        - Self-transfer is not permited
+
+        ## Atomicity
+        Debit and credit ocurr in the same database transaction.
+        If any operation fails, complete rollback is performed.
+
+        ## Notifications
+        Notification is asyncronous. If it fails, transfer is NOT reverted.
+      operationId: transferMoney
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferRequest'
+            examples:
+              basic:
+                summary: Basic transfer
+                value:
+                  sourceAccountNumber: "1234567890123456"
+                  targetAccountNumber: "6543210987654321"
+                  amount: 500000.00
+                  description: "Service payment"
+      responses:
+        '200':
+          description: Transfer sucessful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferResponse'
+              example:
+                transactionId: "550e8400-e29b-41d4-a716-446655440000"
+                sourceAccountNumber: "1234567890123456"
+                targetAccountNumber: "6543210987654321"
+                amount: 500000.00
+                description: "Service payment"
+                type: "TRANSFER"
+                createdAt: "2026-02-05T10:30:00"
+        '400':
+          description: Invalid data or self-transfer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                invalid-amount:
+                  summary: Invalid ammount
+                  value:
+                    timestamp: "2026-02-05T10:30:00Z"
+                    status: 400
+                    error: "Bad Request"
+                    code: "INVALID_AMOUNT"
+                    message: "Ammount must be greater than zero"
+                    path: "/api/v1/transactions/transfer"
+                self-transfer:
+                  summary: Self-transfer
+                  value:
+                    timestamp: "2026-02-05T10:30:00Z"
+                    status: 400
+                    error: "Bad Request"
+                    code: "SELF_TRANSFER_NOT_ALLOWED"
+                    message: "Self-transfer is not permited"
+                    path: "/api/v1/transactions/transfer"
+        '404':
+          description: Source or target account not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                source-not-found:
+                  summary: Source account does not exist
+                  value:
+                    timestamp: "2026-02-05T10:30:00Z"
+                    status: 404
+                    error: "Not Found"
+                    code: "SOURCE_ACCOUNT_NOT_FOUND"
+                    message: "Source account not found: 1234567890123456"
+                    path: "/api/v1/transactions/transfer"
+                target-not-found:
+                  summary: Target account does not exist
+                  value:
+                    timestamp: "2026-02-05T10:30:00Z"
+                    status: 404
+                    error: "Not Found"
+                    code: "TARGET_ACCOUNT_NOT_FOUND"
+                    message: "Target account not found: 6543210987654321"
+                    path: "/api/v1/transactions/transfer"
+        '422':
+          description: Bussiness rule violated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+              example:
+                timestamp: "2026-02-05T10:30:00Z"
+                status: 422
+                error: "Unprocessable Entity"
+                code: "INSUFFICIENT_FUNDS"
+                message: "Insuficient funds. Available balance: 100000.00 COP, requested ammount: 500000.00 COP"
+                path: "/api/v1/transactions/transfer"
+
+components:
+  schemas:
+    CreateAccountRequest:
+      type: object
+      required:
+        - ownerName
+      properties:
+        ownerName:
+          type: string
+          minLength: 2
+          maxLength: 100
+          description: Full name of the account holder
+          example: "John Doe"
+        initialBalance:
+          type: number
+          format: double
+          minimum: 0
+          default: 0
+          description: Initial account balance (must be >= 0)
+          example: 1000000.00
+
+    AccountResponse:
+      type: object
+      properties:
+        accountNumber:
+          type: string
+          pattern: '^[0-9]{10,20}$'
+          description: Unique account number generated by the system
+          example: "1234567890123456"
+        ownerName:
+          type: string
+          description: Account holder name
+          example: "John Doe"
+        balance:
+          type: number
+          format: double
+          description: Current account balance
+          example: 1000000.00
+        status:
+          type: string
+          enum:
+            - ACTIVE
+            - INACTIVE
+          description: Account status
+          example: "ACTIVE"
+        createdAt:
+          type: string
+          format: date-time
+          description: Creation date and time
+          example: "2026-02-05T10:30:00"
+
+    TransferRequest:
+      type: object
+      required:
+        - sourceAccountNumber
+        - targetAccountNumber
+        - amount
+      properties:
+        sourceAccountNumber:
+          type: string
+          pattern: '^[0-9]{10,20}$'
+          description: Source account number
+          example: "1234567890123456"
+        targetAccountNumber:
+          type: string
+          pattern: '^[0-9]{10,20}$'
+          description: Target account number
+          example: "6543210987654321"
+        amount:
+          type: number
+          format: double
+          minimum: 0.01
+          description: Ammount to transfer (must be > 0)
+          example: 500000.00
+        description:
+          type: string
+          maxLength: 255
+          description: Transfer description or concept
+          example: "Service payment"
+
+    TransferResponse:
+      type: object
+      properties:
+        transactionId:
+          type: string
+          format: uuid
+          description: Unique transaction identifier
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        sourceAccountNumber:
+          type: string
+          description: Source account number
+          example: "1234567890123456"
+        targetAccountNumber:
+          type: string
+          description: Target account number
+          example: "6543210987654321"
+        amount:
+          type: number
+          format: double
+          description: Transfered ammount
+          example: 500000.00
+        description:
+          type: string
+          description: Transfer description
+          example: "Service payment"
+        type:
+          type: string
+          enum:
+            - TRANSFER
+          description: Transaction type
+          example: "TRANSFER"
+        createdAt:
+          type: string
+          format: date-time
+          description: Transaction date and time
+          example: "2026-02-05T10:30:00"
+
+    TransactionResponse:
+      type: object
+      properties:
+        transactionId:
+          type: string
+          format: uuid
+          description: Unique transaction identifier
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        type:
+          type: string
+          enum:
+            - CREDIT
+            - DEBIT
+          description: |
+            Movement type from the queried account perspective:
+            - CREDIT: Money recieved
+            - DEBIT: Money sent
+          example: "DEBIT"
+        amount:
+          type: number
+          format: double
+          description: Transaction ammount
+          example: 500000.00
+        counterpartyAccountNumber:
+          type: string
+          description: Counterparty account number
+          example: "6543210987654321"
+        description:
+          type: string
+          description: Transaction description
+          example: "Service payment"
+        balanceAfter:
+          type: number
+          format: double
+          description: Account balance after the transaction
+          example: 500000.00
+        createdAt:
+          type: string
+          format: date-time
+          description: Transaction date and time
+          example: "2026-02-05T10:30:00"
+
+    TransactionHistoryResponse:
+      type: object
+      properties:
+        accountNumber:
+          type: string
+          description: Queried account number
+          example: "1234567890123456"
+        transactions:
+          type: array
+          items:
+            $ref: '#/components/schemas/TransactionResponse'
+        page:
+          type: integer
+          description: Current page
+          example: 0
+        size:
+          type: integer
+          description: Page size
+          example: 20
+        totalElements:
+          type: integer
+          description: Total transactions
+          example: 150
+        totalPages:
+          type: integer
+          description: Total pages
+          example: 8
+
+    ApiErrorResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          description: Moment when the error ocurred
+          example: "2026-02-05T10:30:00Z"
+        status:
+          type: integer
+          description: HTTP status code
+          example: 400
+        error:
+          type: string
+          description: HTTP code description
+          example: "Bad Request"
+        code:
+          type: string
+          description: Internal application error code
+          enum:
+            - VALIDATION_ERROR
+            - ACCOUNT_NOT_FOUND
+            - SOURCE_ACCOUNT_NOT_FOUND
+            - TARGET_ACCOUNT_NOT_FOUND
+            - INSUFFICIENT_FUNDS
+            - SELF_TRANSFER_NOT_ALLOWED
+            - INVALID_AMOUNT
+            - INTERNAL_ERROR
+          example: "INSUFFICIENT_FUNDS"
+        message:
+          type: string
+          description: Descriptive error message
+          example: "Insuficient funds"
+        path:
+          type: string
+          description: Endpoint path that generated the error
+          example: "/api/v1/transactions/transfer"
